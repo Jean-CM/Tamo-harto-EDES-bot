@@ -1,0 +1,16 @@
+{
+  "name": "tamo-harto-edes-bot",
+  "version": "1.0.0",
+  "description": "Bot para consultar consumo EDEESTE via WhatsApp",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "whatsapp-web.js": "^1.23.0",
+    "qrcode-terminal": "^0.12.0",
+    "node-cron": "^3.0.3",
+    "better-sqlite3": "^9.4.3",
+    "puppeteer": "^22.0.0"
+  }
+}
