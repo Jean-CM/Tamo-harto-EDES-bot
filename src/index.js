@@ -242,6 +242,16 @@ async function notificarExito(kwh, fecha, hora) {
 async function iniciar() {
   log('😤 Tamo Harto EDES Bot arrancando...');
 
+  // Limpiar locks de Chromium si quedaron de sesión anterior
+  try {
+    const lockFiles = [
+      path.join(__dirname, '..', 'data', '.wwebjs_auth', 'SingletonLock'),
+      path.join(__dirname, '..', 'data', '.wwebjs_auth', 'SingletonCookie'),
+      path.join(__dirname, '..', 'data', '.wwebjs_auth', 'SingletonSocket'),
+    ];
+    lockFiles.forEach(f => { if (fs.existsSync(f)) { fs.unlinkSync(f); log(`🧹 Lock eliminado: ${f}`); } });
+  } catch (e) { log(`⚠️ No se pudo limpiar locks: ${e.message}`); };
+
   cliente = new Client({
     authStrategy: new LocalAuth({
       dataPath: path.join(__dirname, '..', 'data', '.wwebjs_auth'),
