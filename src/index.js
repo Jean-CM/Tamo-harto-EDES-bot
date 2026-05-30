@@ -13,7 +13,7 @@ const CONFIG = {
   INTERVALO_MINUTOS: 40,
   RETRY_MINUTOS: 5,
   MAX_REINTENTOS: 3,
-  TU_NUMERO: '', // Ej: '18091234567' para recibir notificaciones
+  TU_NUMERO: '18097494863', // Ej: '18091234567' para recibir notificaciones
 };
 
 // ─── BASE DE DATOS ────────────────────────────────────────────────────────────
