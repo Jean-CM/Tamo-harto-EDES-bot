@@ -7,13 +7,20 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 
+// Limpiar locks de Chromium al arrancar
+try {
+  const exec = require('child_process').execSync;
+  exec('find /app/data -name "SingletonLock" -o -name "SingletonCookie" -o -name "SingletonSocket" | xargs rm -f 2>/dev/null || true');
+  console.log('🧹 Locks de Chromium limpiados');
+} catch(e) {}
+
 // ─── CONFIGURACIÓN ────────────────────────────────────────────────────────────
 const CONFIG = {
   NIC: '4351344',
   INTERVALO_MINUTOS: 40,
   RETRY_MINUTOS: 5,
   MAX_REINTENTOS: 3,
-  TU_NUMERO: '18097494863', // Ej: '18091234567' para recibir notificaciones
+  TU_NUMERO: '18097494863',
 };
 
 // ─── BASE DE DATOS ────────────────────────────────────────────────────────────
@@ -110,12 +117,12 @@ async function consultarConsumo() {
   try {
     const chats = await cliente.getChats();
     const chat  = chats.find(c => c.name && (
-  c.name.toLowerCase().includes('edeeste') ||
-  c.name.toLowerCase().includes('ede este') ||
-  c.name.includes('EDEEste') ||
-  c.name.includes('EDEESTE')
-));
-    if (!chat) throw new Error('No encontré el chat de EDEESTE.RD en tu WhatsApp');
+      c.name.toLowerCase().includes('edeeste') ||
+      c.name.toLowerCase().includes('ede este') ||
+      c.name.includes('EDEEste') ||
+      c.name.includes('EDEESTE')
+    ));
+    if (!chat) throw new Error(`No encontré el chat de EDEESTE. Chats: ${chats.map(c=>c.name).join(', ')}`);
 
     log('📤 Paso 1: enviando "1"...');
     await chat.sendMessage('1');
@@ -233,7 +240,6 @@ async function notificarExito(kwh, fecha, hora) {
       log('📬 Notificación enviada');
     } else {
       log(`📊 RESULTADO: ${kwh} kWh`);
-      log('💡 Pon tu número en TU_NUMERO para recibir notificaciones');
     }
   } catch (e) { log(`⚠️  Error notificación: ${e.message}`); }
 }
@@ -241,16 +247,6 @@ async function notificarExito(kwh, fecha, hora) {
 // ─── INICIO ───────────────────────────────────────────────────────────────────
 async function iniciar() {
   log('😤 Tamo Harto EDES Bot arrancando...');
-
-  // Limpiar locks de Chromium si quedaron de sesión anterior
-  try {
-    const lockFiles = [
-      path.join(__dirname, '..', 'data', '.wwebjs_auth', 'SingletonLock'),
-      path.join(__dirname, '..', 'data', '.wwebjs_auth', 'SingletonCookie'),
-      path.join(__dirname, '..', 'data', '.wwebjs_auth', 'SingletonSocket'),
-    ];
-    lockFiles.forEach(f => { if (fs.existsSync(f)) { fs.unlinkSync(f); log(`🧹 Lock eliminado: ${f}`); } });
-  } catch (e) { log(`⚠️ No se pudo limpiar locks: ${e.message}`); };
 
   cliente = new Client({
     authStrategy: new LocalAuth({
