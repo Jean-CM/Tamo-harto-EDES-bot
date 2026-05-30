@@ -116,13 +116,18 @@ async function consultarConsumo() {
 
   try {
     const chats = await cliente.getChats();
-    const chat  = chats.find(c => c.name && (
+    log(`📋 Chats encontrados: ${chats.map(c => `"${c.name}"`).join(' | ')}`);
+
+    const chat = chats.find(c => c.name && (
       c.name.toLowerCase().includes('edeeste') ||
       c.name.toLowerCase().includes('ede este') ||
+      c.name.toLowerCase().includes('ede') ||
+      c.name.toLowerCase().includes('este') ||
       c.name.includes('EDEEste') ||
       c.name.includes('EDEESTE')
     ));
-    if (!chat) throw new Error(`No encontré el chat de EDEESTE. Chats: ${chats.map(c=>c.name).join(', ')}`);
+    if (!chat) throw new Error(`No encontré el chat de EDEESTE`);
+    log(`✅ Chat encontrado: "${chat.name}"`);
 
     log('📤 Paso 1: enviando "1"...');
     await chat.sendMessage('1');
