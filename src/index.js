@@ -14,6 +14,15 @@ try {
   console.log('🧹 Locks de Chromium limpiados');
 } catch(e) {}
 
+// Borrar base de datos vieja para recrearla con nuevas columnas
+try {
+  const dbPath = path.join(__dirname, '..', 'data', 'consumo.db');
+  if (fs.existsSync(dbPath)) {
+    fs.unlinkSync(dbPath);
+    console.log('🗑️  Base de datos antigua eliminada, se creará nueva');
+  }
+} catch(e) {}
+
 const CONFIG = {
   NICS: [
     { nic: '4351344', nombre: 'Jean Carlos' },
@@ -128,11 +137,9 @@ let cliente   = null;
 let enProceso = false;
 let intentos  = 0;
 
-// Consultar un NIC individual
 async function consultarNIC(chat, nic, nombre) {
   log(`🔍 Consultando NIC ${nic} (${nombre})...`);
 
-  // Despertar con texto random y esperar LUCY
   const random = `hola${Math.floor(Math.random() * 9000 + 1000)}`;
   log(`📤 Despertando chat con "${random}"...`);
   await chat.sendMessage(random);
@@ -142,7 +149,6 @@ async function consultarNIC(chat, nic, nombre) {
   await esperarLucy(chat, 45000);
   log('✅ LUCY respondió');
 
-  // Servicio Prepago
   await esperar(4000);
   log('📤 Enviando "3" (Servicio Prepago)...');
   await chat.sendMessage('3');
@@ -150,7 +156,6 @@ async function consultarNIC(chat, nic, nombre) {
   await esperarRespuesta(chat, 'Recarga', 30000);
   log('✅ Submenú Prepago recibido');
 
-  // Recarga de Servicio
   await esperar(4000);
   log('📤 Enviando "1" (Recarga de Servicio)...');
   await chat.sendMessage('1');
@@ -158,7 +163,6 @@ async function consultarNIC(chat, nic, nombre) {
   await esperarRespuesta(chat, 'NIC', 30000);
   log('✅ Solicitud de NIC recibida');
 
-  // Enviar NIC
   await esperar(4000);
   log(`📤 Enviando NIC ${nic}...`);
   await chat.sendMessage(nic);
@@ -166,14 +170,12 @@ async function consultarNIC(chat, nic, nombre) {
   await esperarRespuesta(chat, 'Recargar', 30000);
   log('✅ NIC validado');
 
-  // Ver Energía Actual
   await esperar(4000);
   log('📤 Enviando "2" (Ver Energía Actual)...');
   await chat.sendMessage('2');
   log('⏳ Esperando respuesta con el consumo (30 seg)...');
   await esperar(30000);
 
-  // Leer consumo
   const msgs = await chat.fetchMessages({ limit: 8 });
   let consumoRaw = null;
   for (let i = msgs.length - 1; i >= 0; i--) {
@@ -190,13 +192,12 @@ async function consultarNIC(chat, nic, nombre) {
   sqlInsert.run(nic, nombre, kwh, fecha, hora, ts);
   log(`💾 ${nombre} (${nic}): ${kwh} kWh guardado`);
 
-  // Cerrar sesión
   log('⏳ Esperando menú de cierre...');
   await esperarRespuesta(chat, 'Cerrar', 20000);
   await esperar(4000);
   log('📤 Cerrando sesión con "2"...');
   await chat.sendMessage('2');
-  await esperar(8000); // esperar más antes del siguiente NIC
+  await esperar(10000);
   log(`👋 Sesión cerrada para ${nombre}`);
 
   return { nic, nombre, kwh, fecha, hora };
@@ -221,15 +222,14 @@ async function consultarConsumo() {
 
     const resultados = [];
 
-    // Consultar cada NIC uno por uno
-    for (const { nic, nombre } of CONFIG.NICS) {
+    for (let i = 0; i < CONFIG.NICS.length; i++) {
+      const { nic, nombre } = CONFIG.NICS[i];
       try {
         const resultado = await consultarNIC(chat, nic, nombre);
         resultados.push(resultado);
         log(`✅ NIC ${nic} (${nombre}) completado: ${resultado.kwh} kWh`);
 
-        // Esperar entre consultas
-        if (CONFIG.NICS.indexOf({ nic, nombre }) < CONFIG.NICS.length - 1) {
+        if (i < CONFIG.NICS.length - 1) {
           log('⏳ Esperando 15 segundos antes del siguiente NIC...');
           await esperar(15000);
         }
@@ -239,7 +239,6 @@ async function consultarConsumo() {
       }
     }
 
-    // Enviar notificación con todos los resultados
     await notificarResultados(resultados);
     intentos = 0;
 
@@ -288,7 +287,6 @@ async function notificarResultados(resultados) {
       `━━━━━━━━━━━━━━━━━━━\n` +
       `_Bot automático cada ${CONFIG.INTERVALO_MINUTOS} min_`;
 
-    // Buscar el grupo
     const chats = await cliente.getChats();
     const grupo = chats.find(c => c.isGroup && c.name === CONFIG.GRUPO);
 
