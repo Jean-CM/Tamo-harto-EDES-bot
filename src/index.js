@@ -14,7 +14,6 @@ try {
   console.log('🧹 Locks de Chromium limpiados');
 } catch(e) {}
 
-// ─── CONFIGURACIÓN ────────────────────────────────────────────────────────────
 const CONFIG = {
   NIC: '4351344',
   INTERVALO_MINUTOS: 40,
@@ -23,7 +22,6 @@ const CONFIG = {
   TU_NUMERO: '18097494863',
 };
 
-// ─── BASE DE DATOS ────────────────────────────────────────────────────────────
 const dataDir = path.join(__dirname, '..', 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
@@ -46,7 +44,6 @@ const sqlInsert  = db.prepare('INSERT INTO consumo (kwh, fecha, hora, timestamp)
 const sqlError   = db.prepare('INSERT INTO errores (mensaje, timestamp) VALUES (?, ?)');
 const sqlUltimos = db.prepare('SELECT * FROM consumo ORDER BY timestamp DESC LIMIT 10');
 
-// ─── HELPERS ──────────────────────────────────────────────────────────────────
 const esperar = ms => new Promise(r => setTimeout(r, ms));
 
 const ahora = () => {
@@ -63,23 +60,23 @@ const log = msg => {
   console.log(`[${fecha} ${hora}] ${msg}`);
 };
 
-// Esperar hasta que LUCY aparezca en el chat
-async function esperarLucy(chat, timeoutMs = 30000) {
+// Esperar hasta que LUCY aparezca
+async function esperarLucy(chat, timeoutMs = 45000) {
   const inicio = Date.now();
   while (Date.now() - inicio < timeoutMs) {
-    await esperar(2000);
+    await esperar(3000);
     const msgs = await chat.fetchMessages({ limit: 5 });
     const lucyMsg = msgs.reverse().find(m => !m.fromMe && m.body.includes('LUCY'));
     if (lucyMsg) return lucyMsg.body;
   }
-  throw new Error('LUCY no respondió en 30 segundos');
+  throw new Error('LUCY no respondió en 45 segundos');
 }
 
-// Esperar una respuesta que contenga cierta palabra
-async function esperarRespuesta(chat, palabraClave, timeoutMs = 20000) {
+// Esperar respuesta con palabra clave
+async function esperarRespuesta(chat, palabraClave, timeoutMs = 30000) {
   const inicio = Date.now();
   while (Date.now() - inicio < timeoutMs) {
-    await esperar(2000);
+    await esperar(3000);
     const msgs = await chat.fetchMessages({ limit: 5 });
     const match = msgs.reverse().find(m => !m.fromMe && m.body.includes(palabraClave));
     if (match) return match.body;
@@ -87,7 +84,6 @@ async function esperarRespuesta(chat, palabraClave, timeoutMs = 20000) {
   throw new Error(`No recibí respuesta con "${palabraClave}"`);
 }
 
-// ─── SERVIDOR WEB PARA EL QR ──────────────────────────────────────────────────
 let qrImageData = null;
 let botListo    = false;
 
@@ -127,12 +123,10 @@ const server = http.createServer(async (req, res) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => log(`🌐 Servidor QR corriendo en puerto ${PORT}`));
 
-// ─── ESTADO ───────────────────────────────────────────────────────────────────
 let cliente   = null;
 let enProceso = false;
 let intentos  = 0;
 
-// ─── CONSULTA PRINCIPAL ───────────────────────────────────────────────────────
 async function consultarConsumo() {
   if (enProceso) { log('⚠️  Consulta ya en proceso, esperando...'); return; }
   enProceso = true;
@@ -150,41 +144,45 @@ async function consultarConsumo() {
     if (!chat) throw new Error(`No encontré el chat de EDEESTE. Chats: ${chats.map(c=>`"${c.name}"`).join(' | ')}`);
     log(`✅ Chat encontrado: "${chat.name}"`);
 
-    // Paso 0: enviar texto random para despertar el chat y esperar a LUCY
+    // Paso 0: enviar texto random para despertar y esperar LUCY
     const random = `hola${Math.floor(Math.random() * 9000 + 1000)}`;
     log(`📤 Despertando chat con "${random}"...`);
     await chat.sendMessage(random);
+    await esperar(4000); // esperar 4 seg antes de verificar
 
     log('⏳ Esperando que LUCY aparezca...');
-    await esperarLucy(chat, 30000);
-    log('✅ LUCY respondió, procediendo...');
+    await esperarLucy(chat, 45000);
+    log('✅ LUCY respondió');
 
     // Paso 1: Servicio Prepago
-    await esperar(1500);
+    await esperar(4000);
     log('📤 Enviando "3" (Servicio Prepago)...');
     await chat.sendMessage('3');
-    await esperarRespuesta(chat, 'Recarga', 20000);
+    await esperar(4000);
+    await esperarRespuesta(chat, 'Recarga', 30000);
     log('✅ Submenú Prepago recibido');
 
     // Paso 2: Recarga de Servicio
-    await esperar(1500);
+    await esperar(4000);
     log('📤 Enviando "1" (Recarga de Servicio)...');
     await chat.sendMessage('1');
-    await esperarRespuesta(chat, 'NIC', 20000);
+    await esperar(4000);
+    await esperarRespuesta(chat, 'NIC', 30000);
     log('✅ Solicitud de NIC recibida');
 
     // Paso 3: Enviar NIC
-    await esperar(1500);
+    await esperar(4000);
     log(`📤 Enviando NIC ${CONFIG.NIC}...`);
     await chat.sendMessage(CONFIG.NIC);
-    await esperarRespuesta(chat, 'Recargar', 20000);
+    await esperar(4000);
+    await esperarRespuesta(chat, 'Recargar', 30000);
     log('✅ NIC validado');
 
     // Paso 4: Ver Energía Actual
-    await esperar(1500);
+    await esperar(4000);
     log('📤 Enviando "2" (Ver Energía Actual)...');
     await chat.sendMessage('2');
-    await esperar(8000);
+    await esperar(10000); // esperar 10 seg para que llegue el número
 
     // Leer consumo
     const msgs = await chat.fetchMessages({ limit: 8 });
@@ -204,7 +202,8 @@ async function consultarConsumo() {
     log(`💾 Consumo guardado: ${kwh} kWh`);
 
     // Cerrar sesión
-    await esperar(1500);
+    await esperar(4000);
+    log('📤 Cerrando sesión...');
     await chat.sendMessage('2');
     log('👋 Sesión cerrada');
 
@@ -228,7 +227,6 @@ async function consultarConsumo() {
   enProceso = false;
 }
 
-// ─── NOTIFICACIONES ───────────────────────────────────────────────────────────
 async function notificarExito(kwh, fecha, hora) {
   try {
     const historial = sqlUltimos.all();
@@ -256,7 +254,6 @@ async function notificarExito(kwh, fecha, hora) {
   } catch (e) { log(`⚠️  Error notificación: ${e.message}`); }
 }
 
-// ─── INICIO ───────────────────────────────────────────────────────────────────
 async function iniciar() {
   log('😤 Tamo Harto EDES Bot arrancando...');
 
