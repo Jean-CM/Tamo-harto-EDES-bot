@@ -60,7 +60,6 @@ const log = msg => {
   console.log(`[${fecha} ${hora}] ${msg}`);
 };
 
-// Esperar hasta que LUCY aparezca
 async function esperarLucy(chat, timeoutMs = 45000) {
   const inicio = Date.now();
   while (Date.now() - inicio < timeoutMs) {
@@ -72,7 +71,6 @@ async function esperarLucy(chat, timeoutMs = 45000) {
   throw new Error('LUCY no respondió en 45 segundos');
 }
 
-// Esperar respuesta con palabra clave
 async function esperarRespuesta(chat, palabraClave, timeoutMs = 30000) {
   const inicio = Date.now();
   while (Date.now() - inicio < timeoutMs) {
@@ -89,7 +87,6 @@ let botListo    = false;
 
 const server = http.createServer(async (req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-
   if (botListo) {
     res.end(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:50px;background:#111;color:#0f0">
       <h1>✅ Bot Conectado</h1>
@@ -98,7 +95,6 @@ const server = http.createServer(async (req, res) => {
     </body></html>`);
     return;
   }
-
   if (!qrImageData) {
     res.end(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:50px;background:#111;color:#fff">
       <h1>⏳ Generando QR...</h1>
@@ -107,7 +103,6 @@ const server = http.createServer(async (req, res) => {
     </body></html>`);
     return;
   }
-
   const qrImg = await qrcodeLib.toDataURL(qrImageData, { width: 400 });
   res.end(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:30px;background:#111;color:#fff">
     <h1>😤 Tamo Harto EDES Bot</h1>
@@ -144,11 +139,11 @@ async function consultarConsumo() {
     if (!chat) throw new Error(`No encontré el chat de EDEESTE. Chats: ${chats.map(c=>`"${c.name}"`).join(' | ')}`);
     log(`✅ Chat encontrado: "${chat.name}"`);
 
-    // Paso 0: enviar texto random para despertar y esperar LUCY
+    // Paso 0: despertar con texto random y esperar LUCY
     const random = `hola${Math.floor(Math.random() * 9000 + 1000)}`;
     log(`📤 Despertando chat con "${random}"...`);
     await chat.sendMessage(random);
-    await esperar(4000); // esperar 4 seg antes de verificar
+    await esperar(4000);
 
     log('⏳ Esperando que LUCY aparezca...');
     await esperarLucy(chat, 45000);
@@ -182,7 +177,8 @@ async function consultarConsumo() {
     await esperar(4000);
     log('📤 Enviando "2" (Ver Energía Actual)...');
     await chat.sendMessage('2');
-    await esperar(10000); // esperar 10 seg para que llegue el número
+    log('⏳ Esperando respuesta con el consumo (30 seg)...');
+    await esperar(30000); // esperar 30 seg para que llegue el número
 
     // Leer consumo
     const msgs = await chat.fetchMessages({ limit: 8 });
@@ -201,11 +197,14 @@ async function consultarConsumo() {
     sqlInsert.run(kwh, fecha, hora, ts);
     log(`💾 Consumo guardado: ${kwh} kWh`);
 
-    // Cerrar sesión
+    // Cerrar sesión — esperar que llegue el menú con opción 2
+    log('⏳ Esperando menú de cierre...');
+    await esperarRespuesta(chat, 'Cerrar', 20000);
     await esperar(4000);
-    log('📤 Cerrando sesión...');
+    log('📤 Cerrando sesión con "2"...');
     await chat.sendMessage('2');
-    log('👋 Sesión cerrada');
+    await esperar(5000);
+    log('👋 Sesión cerrada correctamente');
 
     await notificarExito(kwh, fecha, hora);
     intentos = 0;
