@@ -109,7 +109,12 @@ async function consultarConsumo() {
 
   try {
     const chats = await cliente.getChats();
-    const chat  = chats.find(c => c.name && c.name.toLowerCase().includes('edeeste'));
+    const chat  = chats.find(c => c.name && (
+  c.name.toLowerCase().includes('edeeste') ||
+  c.name.toLowerCase().includes('ede este') ||
+  c.name.includes('EDEEste') ||
+  c.name.includes('EDEESTE')
+));
     if (!chat) throw new Error('No encontré el chat de EDEESTE.RD en tu WhatsApp');
 
     log('📤 Paso 1: enviando "1"...');
