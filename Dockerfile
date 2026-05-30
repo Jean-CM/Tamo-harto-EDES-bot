@@ -30,6 +30,4 @@ COPY . .
 
 RUN mkdir -p /app/data
 
-VOLUME ["/app/data"]
-
 CMD ["npm", "start"]
