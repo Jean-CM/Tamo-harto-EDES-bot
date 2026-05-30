@@ -131,7 +131,7 @@ async function consultarConsumo() {
 
     log('📤 Paso 1: enviando "1"...');
     await chat.sendMessage('1');
-    await esperar(5000);
+    await esperar(12000);
 
     let msgs = await chat.fetchMessages({ limit: 3 });
     let ultimo = msgs[msgs.length - 1];
