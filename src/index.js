@@ -63,6 +63,30 @@ const log = msg => {
   console.log(`[${fecha} ${hora}] ${msg}`);
 };
 
+// Esperar hasta que LUCY aparezca en el chat
+async function esperarLucy(chat, timeoutMs = 30000) {
+  const inicio = Date.now();
+  while (Date.now() - inicio < timeoutMs) {
+    await esperar(2000);
+    const msgs = await chat.fetchMessages({ limit: 5 });
+    const lucyMsg = msgs.reverse().find(m => !m.fromMe && m.body.includes('LUCY'));
+    if (lucyMsg) return lucyMsg.body;
+  }
+  throw new Error('LUCY no respondió en 30 segundos');
+}
+
+// Esperar una respuesta que contenga cierta palabra
+async function esperarRespuesta(chat, palabraClave, timeoutMs = 20000) {
+  const inicio = Date.now();
+  while (Date.now() - inicio < timeoutMs) {
+    await esperar(2000);
+    const msgs = await chat.fetchMessages({ limit: 5 });
+    const match = msgs.reverse().find(m => !m.fromMe && m.body.includes(palabraClave));
+    if (match) return match.body;
+  }
+  throw new Error(`No recibí respuesta con "${palabraClave}"`);
+}
+
 // ─── SERVIDOR WEB PARA EL QR ──────────────────────────────────────────────────
 let qrImageData = null;
 let botListo    = false;
@@ -116,72 +140,54 @@ async function consultarConsumo() {
 
   try {
     const chats = await cliente.getChats();
-    log(`📋 Chats encontrados: ${chats.map(c => `"${c.name}"`).join(' | ')}`);
-
     const chat = chats.find(c => c.name && (
       c.name.toLowerCase().includes('edeeste') ||
       c.name.toLowerCase().includes('ede este') ||
       c.name.toLowerCase().includes('ede') ||
-      c.name.toLowerCase().includes('este') ||
       c.name.includes('EDEEste') ||
       c.name.includes('EDEESTE')
     ));
-    if (!chat) throw new Error(`No encontré el chat de EDEESTE`);
+    if (!chat) throw new Error(`No encontré el chat de EDEESTE. Chats: ${chats.map(c=>`"${c.name}"`).join(' | ')}`);
     log(`✅ Chat encontrado: "${chat.name}"`);
 
-    log('📤 Paso 1: enviando "1"...');
-    await chat.sendMessage('1');
-    await esperar(12000);
+    // Paso 0: enviar texto random para despertar el chat y esperar a LUCY
+    const random = `hola${Math.floor(Math.random() * 9000 + 1000)}`;
+    log(`📤 Despertando chat con "${random}"...`);
+    await chat.sendMessage(random);
 
-    let msgs = await chat.fetchMessages({ limit: 3 });
-    let ultimo = msgs[msgs.length - 1];
-    if (!ultimo || ultimo.fromMe || !ultimo.body.includes('LUCY'))
-      throw new Error('No recibí el menú de LUCY');
-    log('✅ Menú LUCY recibido');
+    log('⏳ Esperando que LUCY aparezca...');
+    await esperarLucy(chat, 30000);
+    log('✅ LUCY respondió, procediendo...');
 
+    // Paso 1: Servicio Prepago
     await esperar(1500);
-    log('📤 Paso 2: enviando "3" (Servicio Prepago)...');
+    log('📤 Enviando "3" (Servicio Prepago)...');
     await chat.sendMessage('3');
-    await esperar(5000);
-
-    msgs = await chat.fetchMessages({ limit: 3 });
-    ultimo = msgs[msgs.length - 1];
-    if (!ultimo || ultimo.fromMe || !ultimo.body.includes('Recarga'))
-      throw new Error('No recibí submenú Prepago');
+    await esperarRespuesta(chat, 'Recarga', 20000);
     log('✅ Submenú Prepago recibido');
 
+    // Paso 2: Recarga de Servicio
     await esperar(1500);
-    log('📤 Paso 3: enviando "1" (Recarga de Servicio)...');
+    log('📤 Enviando "1" (Recarga de Servicio)...');
     await chat.sendMessage('1');
-    await esperar(5000);
-
-    msgs = await chat.fetchMessages({ limit: 3 });
-    ultimo = msgs[msgs.length - 1];
-    if (!ultimo || ultimo.fromMe || !ultimo.body.includes('NIC'))
-      throw new Error('No se solicitó el NIC');
+    await esperarRespuesta(chat, 'NIC', 20000);
     log('✅ Solicitud de NIC recibida');
 
+    // Paso 3: Enviar NIC
     await esperar(1500);
-    log(`📤 Paso 4: enviando NIC ${CONFIG.NIC}...`);
+    log(`📤 Enviando NIC ${CONFIG.NIC}...`);
     await chat.sendMessage(CONFIG.NIC);
-    await esperar(7000);
-
-    msgs = await chat.fetchMessages({ limit: 5 });
-    ultimo = msgs[msgs.length - 1];
-    if (!ultimo || ultimo.fromMe)
-      throw new Error('Sin respuesta tras enviar NIC');
-    if (ultimo.body.toLowerCase().includes('error') || ultimo.body.toLowerCase().includes('no encontr'))
-      throw new Error(`EDEESTE rechazó el NIC: ${ultimo.body}`);
-    if (!ultimo.body.includes('Recargar'))
-      throw new Error(`Respuesta inesperada: ${ultimo.body}`);
+    await esperarRespuesta(chat, 'Recargar', 20000);
     log('✅ NIC validado');
 
+    // Paso 4: Ver Energía Actual
     await esperar(1500);
-    log('📤 Paso 5: enviando "2" (Ver Energía Actual)...');
+    log('📤 Enviando "2" (Ver Energía Actual)...');
     await chat.sendMessage('2');
-    await esperar(6000);
+    await esperar(8000);
 
-    msgs = await chat.fetchMessages({ limit: 6 });
+    // Leer consumo
+    const msgs = await chat.fetchMessages({ limit: 8 });
     let consumoRaw = null;
     for (let i = msgs.length - 1; i >= 0; i--) {
       const body = msgs[i].body.trim();
@@ -197,6 +203,7 @@ async function consultarConsumo() {
     sqlInsert.run(kwh, fecha, hora, ts);
     log(`💾 Consumo guardado: ${kwh} kWh`);
 
+    // Cerrar sesión
     await esperar(1500);
     await chat.sendMessage('2');
     log('👋 Sesión cerrada');
