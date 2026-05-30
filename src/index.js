@@ -63,9 +63,10 @@ const esperar = ms => new Promise(r => setTimeout(r, ms));
 
 const ahora = () => {
   const d = new Date();
+  const rdTime = new Date(d.toLocaleString('en-US', { timeZone: 'America/Santo_Domingo' }));
   return {
-    fecha: d.toLocaleDateString('es-DO'),
-    hora:  d.toLocaleTimeString('es-DO'),
+    fecha: rdTime.toLocaleDateString('es-DO'),
+    hora:  rdTime.toLocaleTimeString('es-DO'),
     ts:    d.getTime(),
   };
 };
