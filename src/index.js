@@ -1,9 +1,11 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
+const qrcodeLib = require('qrcode');
 const cron = require('node-cron');
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
 
 // ─── CONFIGURACIÓN ────────────────────────────────────────────────────────────
 const CONFIG = {
@@ -11,11 +13,10 @@ const CONFIG = {
   INTERVALO_MINUTOS: 40,
   RETRY_MINUTOS: 5,
   MAX_REINTENTOS: 3,
-  ESPERA_MS: 8000,
-  TU_NUMERO: '',  // Ej: '18091234567' para recibir notificaciones por WhatsApp
+  TU_NUMERO: '', // Ej: '18091234567' para recibir notificaciones
 };
 
-// ─── BASE DE DATOS ─────────────────────────────────────────────────────────────
+// ─── BASE DE DATOS ────────────────────────────────────────────────────────────
 const dataDir = path.join(__dirname, '..', 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
@@ -55,8 +56,48 @@ const log = msg => {
   console.log(`[${fecha} ${hora}] ${msg}`);
 };
 
+// ─── SERVIDOR WEB PARA EL QR ──────────────────────────────────────────────────
+let qrImageData = null;
+let botListo    = false;
+
+const server = http.createServer(async (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+
+  if (botListo) {
+    res.end(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:50px;background:#111;color:#0f0">
+      <h1>✅ Bot Conectado</h1>
+      <p style="font-size:20px">WhatsApp ya está vinculado y el bot está corriendo.</p>
+      <p>Consultando EDEESTE cada ${CONFIG.INTERVALO_MINUTOS} minutos automáticamente.</p>
+    </body></html>`);
+    return;
+  }
+
+  if (!qrImageData) {
+    res.end(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:50px;background:#111;color:#fff">
+      <h1>⏳ Generando QR...</h1>
+      <p>El bot está iniciando. Esta página se recarga sola.</p>
+      <script>setTimeout(()=>location.reload(), 5000)</script>
+    </body></html>`);
+    return;
+  }
+
+  const qrImg = await qrcodeLib.toDataURL(qrImageData, { width: 400 });
+  res.end(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:30px;background:#111;color:#fff">
+    <h1>😤 Tamo Harto EDES Bot</h1>
+    <h2>📱 Escanea este QR con WhatsApp Business</h2>
+    <img src="${qrImg}" style="border:8px solid white;border-radius:16px;width:350px"/>
+    <br/><br/>
+    <p style="color:#aaa">WhatsApp Business → ⋮ → Dispositivos vinculados → Vincular dispositivo</p>
+    <p style="color:#f90;font-weight:bold">⚠️ El QR expira cada 60 seg — página se recarga automáticamente</p>
+    <script>setTimeout(()=>location.reload(), 30000)</script>
+  </body></html>`);
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => log(`🌐 Servidor QR corriendo en puerto ${PORT}`));
+
 // ─── ESTADO ───────────────────────────────────────────────────────────────────
-let cliente = null;
+let cliente   = null;
 let enProceso = false;
 let intentos  = 0;
 
@@ -77,9 +118,8 @@ async function consultarConsumo() {
 
     let msgs = await chat.fetchMessages({ limit: 3 });
     let ultimo = msgs[msgs.length - 1];
-    if (!ultimo || ultimo.fromMe || !ultimo.body.includes('LUCY')) {
+    if (!ultimo || ultimo.fromMe || !ultimo.body.includes('LUCY'))
       throw new Error('No recibí el menú de LUCY');
-    }
     log('✅ Menú LUCY recibido');
 
     await esperar(1500);
@@ -87,11 +127,10 @@ async function consultarConsumo() {
     await chat.sendMessage('3');
     await esperar(5000);
 
-    msgs   = await chat.fetchMessages({ limit: 3 });
+    msgs = await chat.fetchMessages({ limit: 3 });
     ultimo = msgs[msgs.length - 1];
-    if (!ultimo || ultimo.fromMe || !ultimo.body.includes('Recarga')) {
-      throw new Error('No recibí el submenú de Servicio Prepago');
-    }
+    if (!ultimo || ultimo.fromMe || !ultimo.body.includes('Recarga'))
+      throw new Error('No recibí submenú Prepago');
     log('✅ Submenú Prepago recibido');
 
     await esperar(1500);
@@ -99,11 +138,10 @@ async function consultarConsumo() {
     await chat.sendMessage('1');
     await esperar(5000);
 
-    msgs   = await chat.fetchMessages({ limit: 3 });
+    msgs = await chat.fetchMessages({ limit: 3 });
     ultimo = msgs[msgs.length - 1];
-    if (!ultimo || ultimo.fromMe || !ultimo.body.includes('NIC')) {
+    if (!ultimo || ultimo.fromMe || !ultimo.body.includes('NIC'))
       throw new Error('No se solicitó el NIC');
-    }
     log('✅ Solicitud de NIC recibida');
 
     await esperar(1500);
@@ -111,13 +149,14 @@ async function consultarConsumo() {
     await chat.sendMessage(CONFIG.NIC);
     await esperar(7000);
 
-    msgs   = await chat.fetchMessages({ limit: 5 });
+    msgs = await chat.fetchMessages({ limit: 5 });
     ultimo = msgs[msgs.length - 1];
-    if (!ultimo || ultimo.fromMe) throw new Error('Sin respuesta tras enviar NIC');
-    if (ultimo.body.toLowerCase().includes('error') || ultimo.body.toLowerCase().includes('no encontr')) {
+    if (!ultimo || ultimo.fromMe)
+      throw new Error('Sin respuesta tras enviar NIC');
+    if (ultimo.body.toLowerCase().includes('error') || ultimo.body.toLowerCase().includes('no encontr'))
       throw new Error(`EDEESTE rechazó el NIC: ${ultimo.body}`);
-    }
-    if (!ultimo.body.includes('Recargar')) throw new Error(`Respuesta inesperada: ${ultimo.body}`);
+    if (!ultimo.body.includes('Recargar'))
+      throw new Error(`Respuesta inesperada: ${ultimo.body}`);
     log('✅ NIC validado');
 
     await esperar(1500);
@@ -126,7 +165,6 @@ async function consultarConsumo() {
     await esperar(6000);
 
     msgs = await chat.fetchMessages({ limit: 6 });
-
     let consumoRaw = null;
     for (let i = msgs.length - 1; i >= 0; i--) {
       const body = msgs[i].body.trim();
@@ -135,11 +173,10 @@ async function consultarConsumo() {
         break;
       }
     }
-    if (!consumoRaw) throw new Error('No pude leer el valor de consumo en la respuesta');
+    if (!consumoRaw) throw new Error('No pude leer el valor de consumo');
 
     const kwh = parseFloat(consumoRaw);
     const { fecha, hora, ts } = ahora();
-
     sqlInsert.run(kwh, fecha, hora, ts);
     log(`💾 Consumo guardado: ${kwh} kWh`);
 
@@ -154,17 +191,14 @@ async function consultarConsumo() {
     log(`❌ Error: ${err.message}`);
     sqlError.run(err.message, Date.now());
     intentos++;
-
     if (intentos < CONFIG.MAX_REINTENTOS) {
       log(`🔁 Reintentando en ${CONFIG.RETRY_MINUTOS} min (intento ${intentos}/${CONFIG.MAX_REINTENTOS})...`);
       enProceso = false;
       setTimeout(consultarConsumo, CONFIG.RETRY_MINUTOS * 60 * 1000);
       return;
     }
-
     log('🚫 Máximo de reintentos. Esperando próximo ciclo.');
     intentos = 0;
-    await notificarError(err.message);
   }
 
   enProceso = false;
@@ -180,14 +214,12 @@ async function notificarExito(kwh, fecha, hora) {
       const delta = kwh - anterior.kwh;
       diff = `\n📈 Variación: ${delta >= 0 ? '+' : ''}${delta.toFixed(2)} kWh vs lectura anterior`;
     }
-
     const msg =
       `😤 *Tamo Harto EDES - Consumo*\n` +
       `━━━━━━━━━━━━━━━━━━━\n` +
       `🔋 Energía actual: *${kwh} kWh*\n` +
       `📅 Fecha: ${fecha}\n` +
-      `🕐 Hora: ${hora}` +
-      diff +
+      `🕐 Hora: ${hora}` + diff +
       `\n━━━━━━━━━━━━━━━━━━━\n` +
       `_Bot automático cada ${CONFIG.INTERVALO_MINUTOS} min_`;
 
@@ -196,26 +228,9 @@ async function notificarExito(kwh, fecha, hora) {
       log('📬 Notificación enviada');
     } else {
       log(`📊 RESULTADO: ${kwh} kWh`);
-      log('💡 Configura TU_NUMERO en CONFIG para recibir notificaciones por WhatsApp');
+      log('💡 Pon tu número en TU_NUMERO para recibir notificaciones');
     }
-  } catch (e) {
-    log(`⚠️  Error enviando notificación: ${e.message}`);
-  }
-}
-
-async function notificarError(mensaje) {
-  try {
-    const msg =
-      `❌ *Tamo Harto EDES - Error*\n` +
-      `━━━━━━━━━━━━━━━━━━━\n` +
-      `${mensaje}\n` +
-      `_Se reintentará en el próximo ciclo (${CONFIG.INTERVALO_MINUTOS} min)_`;
-
-    if (CONFIG.TU_NUMERO) {
-      await cliente.sendMessage(`${CONFIG.TU_NUMERO}@c.us`, msg);
-    }
-    log(`🚨 Error notificado: ${mensaje}`);
-  } catch (e) {}
+  } catch (e) { log(`⚠️  Error notificación: ${e.message}`); }
 }
 
 // ─── INICIO ───────────────────────────────────────────────────────────────────
@@ -243,20 +258,25 @@ async function iniciar() {
   });
 
   cliente.on('qr', qr => {
-    log('📱 ¡Escanea este QR con WhatsApp Business!');
-    log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    qrImageData = qr;
+    log('📱 QR generado — abre la URL pública de Railway en tu navegador');
     qrcode.generate(qr, { small: true });
-    log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    log('👆 WhatsApp Business → ⋮ → Dispositivos vinculados → Vincular dispositivo');
   });
 
-  cliente.on('authenticated', () => log('✅ WhatsApp autenticado'));
-  cliente.on('auth_failure',  msg => { log(`❌ Fallo auth: ${msg}`); process.exit(1); });
+  cliente.on('authenticated', () => {
+    log('✅ WhatsApp autenticado');
+    qrImageData = null;
+  });
+
+  cliente.on('auth_failure', msg => {
+    log(`❌ Fallo auth: ${msg}`);
+    process.exit(1);
+  });
 
   cliente.on('ready', async () => {
+    botListo = true;
     log('🟢 ¡Bot listo! Conectado a WhatsApp Business');
     log(`⏰ Consultando EDEESTE cada ${CONFIG.INTERVALO_MINUTOS} minutos`);
-    log(`📋 NIC configurado: ${CONFIG.NIC}`);
 
     setTimeout(consultarConsumo, 10000);
 
@@ -267,23 +287,21 @@ async function iniciar() {
 
     cron.schedule('0 8 * * *', async () => {
       const registros = sqlUltimos.all();
-      if (!registros.length) return;
+      if (!registros.length || !CONFIG.TU_NUMERO) return;
       const lista = registros.slice(0, 6).map((r, i) => `${i + 1}. ${r.hora} → *${r.kwh} kWh*`).join('\n');
       const reporte =
         `📊 *Reporte Diario EDEESTE*\n` +
         `━━━━━━━━━━━━━━━━━━━\n` +
         lista + '\n' +
         `━━━━━━━━━━━━━━━━━━━\n` +
-        `Min: ${Math.min(...registros.map(r => r.kwh))} kWh\n` +
-        `Max: ${Math.max(...registros.map(r => r.kwh))} kWh`;
-      if (CONFIG.TU_NUMERO) {
-        await cliente.sendMessage(`${CONFIG.TU_NUMERO}@c.us`, reporte);
-      }
+        `Min: ${Math.min(...registros.map(r => r.kwh))} kWh | Max: ${Math.max(...registros.map(r => r.kwh))} kWh`;
+      await cliente.sendMessage(`${CONFIG.TU_NUMERO}@c.us`, reporte);
       log('📊 Reporte diario enviado');
     });
   });
 
   cliente.on('disconnected', reason => {
+    botListo = false;
     log(`🔴 Desconectado: ${reason} — reconectando en 30s...`);
     setTimeout(iniciar, 30000);
   });
@@ -292,7 +310,6 @@ async function iniciar() {
 }
 
 process.on('SIGINT', async () => {
-  log('🛑 Apagando bot...');
   if (cliente) await cliente.destroy();
   process.exit(0);
 });
