@@ -15,11 +15,15 @@ try {
 } catch(e) {}
 
 const CONFIG = {
-  NIC: '4351344',
+  NICS: [
+    { nic: '4351344', nombre: 'Jean Carlos' },
+    { nic: '4204764', nombre: 'Eridania' },
+  ],
   INTERVALO_MINUTOS: 40,
   RETRY_MINUTOS: 5,
   MAX_REINTENTOS: 3,
   TU_NUMERO: '18097494863',
+  GRUPO: 'Tamo Harto EDES',
 };
 
 const dataDir = path.join(__dirname, '..', 'data');
@@ -29,6 +33,8 @@ const db = new Database(path.join(dataDir, 'consumo.db'));
 db.exec(`
   CREATE TABLE IF NOT EXISTS consumo (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    nic       TEXT    NOT NULL,
+    nombre    TEXT    NOT NULL,
     kwh       REAL    NOT NULL,
     fecha     TEXT    NOT NULL,
     hora      TEXT    NOT NULL,
@@ -40,9 +46,9 @@ db.exec(`
     timestamp INTEGER NOT NULL
   );
 `);
-const sqlInsert  = db.prepare('INSERT INTO consumo (kwh, fecha, hora, timestamp) VALUES (?, ?, ?, ?)');
+const sqlInsert  = db.prepare('INSERT INTO consumo (nic, nombre, kwh, fecha, hora, timestamp) VALUES (?, ?, ?, ?, ?, ?)');
 const sqlError   = db.prepare('INSERT INTO errores (mensaje, timestamp) VALUES (?, ?)');
-const sqlUltimos = db.prepare('SELECT * FROM consumo ORDER BY timestamp DESC LIMIT 10');
+const sqlUltimos = db.prepare('SELECT * FROM consumo WHERE nic = ? ORDER BY timestamp DESC LIMIT 5');
 
 const esperar = ms => new Promise(r => setTimeout(r, ms));
 
@@ -122,6 +128,80 @@ let cliente   = null;
 let enProceso = false;
 let intentos  = 0;
 
+// Consultar un NIC individual
+async function consultarNIC(chat, nic, nombre) {
+  log(`🔍 Consultando NIC ${nic} (${nombre})...`);
+
+  // Despertar con texto random y esperar LUCY
+  const random = `hola${Math.floor(Math.random() * 9000 + 1000)}`;
+  log(`📤 Despertando chat con "${random}"...`);
+  await chat.sendMessage(random);
+  await esperar(4000);
+
+  log('⏳ Esperando que LUCY aparezca...');
+  await esperarLucy(chat, 45000);
+  log('✅ LUCY respondió');
+
+  // Servicio Prepago
+  await esperar(4000);
+  log('📤 Enviando "3" (Servicio Prepago)...');
+  await chat.sendMessage('3');
+  await esperar(4000);
+  await esperarRespuesta(chat, 'Recarga', 30000);
+  log('✅ Submenú Prepago recibido');
+
+  // Recarga de Servicio
+  await esperar(4000);
+  log('📤 Enviando "1" (Recarga de Servicio)...');
+  await chat.sendMessage('1');
+  await esperar(4000);
+  await esperarRespuesta(chat, 'NIC', 30000);
+  log('✅ Solicitud de NIC recibida');
+
+  // Enviar NIC
+  await esperar(4000);
+  log(`📤 Enviando NIC ${nic}...`);
+  await chat.sendMessage(nic);
+  await esperar(4000);
+  await esperarRespuesta(chat, 'Recargar', 30000);
+  log('✅ NIC validado');
+
+  // Ver Energía Actual
+  await esperar(4000);
+  log('📤 Enviando "2" (Ver Energía Actual)...');
+  await chat.sendMessage('2');
+  log('⏳ Esperando respuesta con el consumo (30 seg)...');
+  await esperar(30000);
+
+  // Leer consumo
+  const msgs = await chat.fetchMessages({ limit: 8 });
+  let consumoRaw = null;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const body = msgs[i].body.trim();
+    if (!msgs[i].fromMe && /^\d+(\.\d+)?$/.test(body)) {
+      consumoRaw = body;
+      break;
+    }
+  }
+  if (!consumoRaw) throw new Error(`No pude leer el consumo del NIC ${nic}`);
+
+  const kwh = parseFloat(consumoRaw);
+  const { fecha, hora, ts } = ahora();
+  sqlInsert.run(nic, nombre, kwh, fecha, hora, ts);
+  log(`💾 ${nombre} (${nic}): ${kwh} kWh guardado`);
+
+  // Cerrar sesión
+  log('⏳ Esperando menú de cierre...');
+  await esperarRespuesta(chat, 'Cerrar', 20000);
+  await esperar(4000);
+  log('📤 Cerrando sesión con "2"...');
+  await chat.sendMessage('2');
+  await esperar(8000); // esperar más antes del siguiente NIC
+  log(`👋 Sesión cerrada para ${nombre}`);
+
+  return { nic, nombre, kwh, fecha, hora };
+}
+
 async function consultarConsumo() {
   if (enProceso) { log('⚠️  Consulta ya en proceso, esperando...'); return; }
   enProceso = true;
@@ -139,78 +219,32 @@ async function consultarConsumo() {
     if (!chat) throw new Error(`No encontré el chat de EDEESTE. Chats: ${chats.map(c=>`"${c.name}"`).join(' | ')}`);
     log(`✅ Chat encontrado: "${chat.name}"`);
 
-    // Paso 0: despertar con texto random y esperar LUCY
-    const random = `hola${Math.floor(Math.random() * 9000 + 1000)}`;
-    log(`📤 Despertando chat con "${random}"...`);
-    await chat.sendMessage(random);
-    await esperar(4000);
+    const resultados = [];
 
-    log('⏳ Esperando que LUCY aparezca...');
-    await esperarLucy(chat, 45000);
-    log('✅ LUCY respondió');
+    // Consultar cada NIC uno por uno
+    for (const { nic, nombre } of CONFIG.NICS) {
+      try {
+        const resultado = await consultarNIC(chat, nic, nombre);
+        resultados.push(resultado);
+        log(`✅ NIC ${nic} (${nombre}) completado: ${resultado.kwh} kWh`);
 
-    // Paso 1: Servicio Prepago
-    await esperar(4000);
-    log('📤 Enviando "3" (Servicio Prepago)...');
-    await chat.sendMessage('3');
-    await esperar(4000);
-    await esperarRespuesta(chat, 'Recarga', 30000);
-    log('✅ Submenú Prepago recibido');
-
-    // Paso 2: Recarga de Servicio
-    await esperar(4000);
-    log('📤 Enviando "1" (Recarga de Servicio)...');
-    await chat.sendMessage('1');
-    await esperar(4000);
-    await esperarRespuesta(chat, 'NIC', 30000);
-    log('✅ Solicitud de NIC recibida');
-
-    // Paso 3: Enviar NIC
-    await esperar(4000);
-    log(`📤 Enviando NIC ${CONFIG.NIC}...`);
-    await chat.sendMessage(CONFIG.NIC);
-    await esperar(4000);
-    await esperarRespuesta(chat, 'Recargar', 30000);
-    log('✅ NIC validado');
-
-    // Paso 4: Ver Energía Actual
-    await esperar(4000);
-    log('📤 Enviando "2" (Ver Energía Actual)...');
-    await chat.sendMessage('2');
-    log('⏳ Esperando respuesta con el consumo (30 seg)...');
-    await esperar(30000); // esperar 30 seg para que llegue el número
-
-    // Leer consumo
-    const msgs = await chat.fetchMessages({ limit: 8 });
-    let consumoRaw = null;
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const body = msgs[i].body.trim();
-      if (!msgs[i].fromMe && /^\d+(\.\d+)?$/.test(body)) {
-        consumoRaw = body;
-        break;
+        // Esperar entre consultas
+        if (CONFIG.NICS.indexOf({ nic, nombre }) < CONFIG.NICS.length - 1) {
+          log('⏳ Esperando 15 segundos antes del siguiente NIC...');
+          await esperar(15000);
+        }
+      } catch (err) {
+        log(`❌ Error en NIC ${nic} (${nombre}): ${err.message}`);
+        resultados.push({ nic, nombre, kwh: null, error: err.message });
       }
     }
-    if (!consumoRaw) throw new Error('No pude leer el valor de consumo');
 
-    const kwh = parseFloat(consumoRaw);
-    const { fecha, hora, ts } = ahora();
-    sqlInsert.run(kwh, fecha, hora, ts);
-    log(`💾 Consumo guardado: ${kwh} kWh`);
-
-    // Cerrar sesión — esperar que llegue el menú con opción 2
-    log('⏳ Esperando menú de cierre...');
-    await esperarRespuesta(chat, 'Cerrar', 20000);
-    await esperar(4000);
-    log('📤 Cerrando sesión con "2"...');
-    await chat.sendMessage('2');
-    await esperar(5000);
-    log('👋 Sesión cerrada correctamente');
-
-    await notificarExito(kwh, fecha, hora);
+    // Enviar notificación con todos los resultados
+    await notificarResultados(resultados);
     intentos = 0;
 
   } catch (err) {
-    log(`❌ Error: ${err.message}`);
+    log(`❌ Error general: ${err.message}`);
     sqlError.run(err.message, Date.now());
     intentos++;
     if (intentos < CONFIG.MAX_REINTENTOS) {
@@ -226,30 +260,46 @@ async function consultarConsumo() {
   enProceso = false;
 }
 
-async function notificarExito(kwh, fecha, hora) {
+async function notificarResultados(resultados) {
   try {
-    const historial = sqlUltimos.all();
-    const anterior  = historial[1];
-    let diff = '';
-    if (anterior) {
-      const delta = kwh - anterior.kwh;
-      diff = `\n📈 Variación: ${delta >= 0 ? '+' : ''}${delta.toFixed(2)} kWh vs lectura anterior`;
+    const { fecha, hora } = ahora();
+
+    let lineas = '';
+    for (const r of resultados) {
+      if (r.kwh !== null) {
+        const historial = sqlUltimos.all(r.nic);
+        const anterior  = historial[1];
+        let diff = '';
+        if (anterior) {
+          const delta = r.kwh - anterior.kwh;
+          diff = ` (${delta >= 0 ? '+' : ''}${delta.toFixed(2)} kWh)`;
+        }
+        lineas += `👤 *${r.nombre}*\n🔋 Energía: *${r.kwh} kWh*${diff}\n\n`;
+      } else {
+        lineas += `👤 *${r.nombre}*\n❌ Error: ${r.error}\n\n`;
+      }
     }
+
     const msg =
       `😤 *Tamo Harto EDES - Consumo*\n` +
       `━━━━━━━━━━━━━━━━━━━\n` +
-      `🔋 Energía actual: *${kwh} kWh*\n` +
-      `📅 Fecha: ${fecha}\n` +
-      `🕐 Hora: ${hora}` + diff +
-      `\n━━━━━━━━━━━━━━━━━━━\n` +
+      lineas +
+      `📅 ${fecha} 🕐 ${hora}\n` +
+      `━━━━━━━━━━━━━━━━━━━\n` +
       `_Bot automático cada ${CONFIG.INTERVALO_MINUTOS} min_`;
 
-    if (CONFIG.TU_NUMERO) {
-      await cliente.sendMessage(`${CONFIG.TU_NUMERO}@c.us`, msg);
-      log('📬 Notificación enviada');
+    // Buscar el grupo
+    const chats = await cliente.getChats();
+    const grupo = chats.find(c => c.isGroup && c.name === CONFIG.GRUPO);
+
+    if (grupo) {
+      await grupo.sendMessage(msg);
+      log(`📬 Notificación enviada al grupo "${CONFIG.GRUPO}"`);
     } else {
-      log(`📊 RESULTADO: ${kwh} kWh`);
+      log(`⚠️  No encontré el grupo "${CONFIG.GRUPO}" — enviando al número personal`);
+      await cliente.sendMessage(`${CONFIG.TU_NUMERO}@c.us`, msg);
     }
+
   } catch (e) { log(`⚠️  Error notificación: ${e.message}`); }
 }
 
@@ -296,6 +346,7 @@ async function iniciar() {
     botListo = true;
     log('🟢 ¡Bot listo! Conectado a WhatsApp Business');
     log(`⏰ Consultando EDEESTE cada ${CONFIG.INTERVALO_MINUTOS} minutos`);
+    log(`👥 Notificaciones al grupo: "${CONFIG.GRUPO}"`);
 
     setTimeout(consultarConsumo, 10000);
 
@@ -305,17 +356,20 @@ async function iniciar() {
     });
 
     cron.schedule('0 8 * * *', async () => {
-      const registros = sqlUltimos.all();
-      if (!registros.length || !CONFIG.TU_NUMERO) return;
-      const lista = registros.slice(0, 6).map((r, i) => `${i + 1}. ${r.hora} → *${r.kwh} kWh*`).join('\n');
-      const reporte =
-        `📊 *Reporte Diario EDEESTE*\n` +
-        `━━━━━━━━━━━━━━━━━━━\n` +
-        lista + '\n' +
-        `━━━━━━━━━━━━━━━━━━━\n` +
-        `Min: ${Math.min(...registros.map(r => r.kwh))} kWh | Max: ${Math.max(...registros.map(r => r.kwh))} kWh`;
-      await cliente.sendMessage(`${CONFIG.TU_NUMERO}@c.us`, reporte);
-      log('📊 Reporte diario enviado');
+      const chats = await cliente.getChats();
+      const grupo = chats.find(c => c.isGroup && c.name === CONFIG.GRUPO);
+      if (!grupo) return;
+
+      let reporte = `📊 *Reporte Diario EDEESTE*\n━━━━━━━━━━━━━━━━━━━\n`;
+      for (const { nic, nombre } of CONFIG.NICS) {
+        const registros = sqlUltimos.all(nic);
+        if (!registros.length) continue;
+        const lista = registros.slice(0, 4).map((r, i) => `  ${i + 1}. ${r.hora} → ${r.kwh} kWh`).join('\n');
+        reporte += `👤 *${nombre}*\n${lista}\n\n`;
+      }
+      reporte += `━━━━━━━━━━━━━━━━━━━`;
+      await grupo.sendMessage(reporte);
+      log('📊 Reporte diario enviado al grupo');
     });
   });
 
